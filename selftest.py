@@ -25,6 +25,7 @@ from opponent import analyze_game, build_profile, render_report
 from opponent_book import build_book
 import chesscom
 import lichess
+import live
 from puzzles import (THEME_LABELS, PuzzleDB, check_move_sync,
                      generate_punish_puzzles, generate_puzzles)
 
@@ -302,6 +303,79 @@ def main():
             ok &= check("ungültiger Chess.com-Name wird abgelehnt", False)
         except ValueError:
             ok &= check("ungültiger Chess.com-Name wird abgelehnt", True)
+
+        # --- Test 10: Live-Beobachtung (Offline-Stubs) -------------------
+        print("\nTest 10 – Live-Beobachtung (Lichess-Stream/Chess.com-Daily):")
+        cur_json = {"id": "abcd1234", "moves": "e4 e5 Nf3", "speed": "blitz",
+                    "players": {
+                        "white": {"user": {"name": "A"}, "rating": 1500},
+                        "black": {"user": {"name": "TestSpieler42"},
+                                  "rating": 1490}}}
+
+        def cur_opener(req):
+            assert "/api/user/testspieler42/current-game" in req.full_url
+            return io.BytesIO(json.dumps(cur_json).encode())
+
+        g = live.lichess_current_game("testspieler42", opener=cur_opener)
+        ok &= check("Snapshot der laufenden Partie geladen",
+                    g.get("id") == "abcd1234")
+        b, sans = live.board_from_san(g["moves"])
+        ok &= check("SAN-Züge korrekt aufgebaut (Sf3 steht)",
+                    sans == ["e4", "e5", "Nf3"]
+                    and b.piece_at(chess.F3) is not None)
+
+        fen1 = ("rnbqkb1r/pppp1ppp/5n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R "
+                "w KQkq - 2 3")
+        stream_bytes = (
+            json.dumps({"id": "abcd1234", "fen": fen1,
+                        "lastMove": "g8f6"}) + "\n"
+            + "\n"                                    # Keepalive
+            + json.dumps({"fen": fen1.replace("RNBQKB1R w", "RNBQKB1R b"),
+                          "lm": "f1c4", "wc": 175, "bc": 168}) + "\n")
+
+        def stream_opener(req):
+            assert "/api/stream/game/abcd1234" in req.full_url
+            return io.BytesIO(stream_bytes.encode())
+
+        import threading as _thr
+        events = []
+        n = live.stream_game("abcd1234", events.append, _thr.Event(),
+                             opener=stream_opener)
+        ok &= check("Stream: 2 Ereignisse, Keepalive ignoriert",
+                    n == 2 and len(events) == 2
+                    and events[1].get("lm") == "f1c4")
+        stop = _thr.Event()
+        events2 = []
+        live.stream_game("abcd1234",
+                         lambda d: (events2.append(d), stop.set()),
+                         stop, opener=stream_opener)
+        ok &= check("Stream: Stopp greift nach 1. Ereignis",
+                    len(events2) == 1)
+        try:
+            live.stream_game("ab/../cd", events.append, _thr.Event(),
+                             opener=stream_opener)
+            ok &= check("ungültige Partie-ID wird abgelehnt", False)
+        except ValueError:
+            ok &= check("ungültige Partie-ID wird abgelehnt", True)
+
+        daily_json = {"games": [{
+            "fen": chess.STARTING_FEN, "pgn": "1. d4 *",
+            "white": "https://api.chess.com/pub/player/a",
+            "black": "https://api.chess.com/pub/player/testspieler42",
+            "last_activity": 42}]}
+
+        def daily_opener(req):
+            assert "/pub/player/testspieler42/games" in req.full_url
+            return io.BytesIO(json.dumps(daily_json).encode())
+
+        dg = live.chesscom_daily_games("testspieler42",
+                                       opener=daily_opener)
+        ok &= check("Daily-Partien-Snapshot geladen",
+                    len(dg) == 1 and "fen" in dg[0])
+        ok &= check("Uhr-Formatierung (s und ms)",
+                    live.fmt_clock(65) == "1:05"
+                    and live.fmt_clock(3700) == "1:01:40"
+                    and live.fmt_clock(3_700_000) == "1:01:40")
 
     finally:
         engine.quit()

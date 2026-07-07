@@ -37,7 +37,8 @@ def main() -> None:
     app.update()
 
     # Alle Tabs einmal anzeigen (erzwingt Layout/Zeichnen jedes Widgets).
-    for tab in (app.training_tab, app.puzzle_tab, app.opponent_tab):
+    for tab in (app.training_tab, app.puzzle_tab, app.opponent_tab,
+                app.live_tab):
         app.notebook.select(tab)
         app.update()
 
@@ -67,6 +68,16 @@ def main() -> None:
     assert promo_move is not None and promo_move.promotion == chess.QUEEN, (
         f"Umwandlungsdialog lieferte kein gültiges Ergebnis: {promo_move}")
     print("Umwandlungsdialog OK:", promo_move.uci())
+
+    # Beobachten-Tab: ein Stream-Ereignis durch den echten Pfad schicken.
+    ev = {"fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR "
+                 "b KQkq - 0 1",
+          "lm": "e2e4", "wc": 180, "bc": 180}
+    app.live_tab._apply_stream_event(app.live_tab._gen, ev)
+    app.update()
+    assert app.live_tab.board.piece_at(chess.E4) is not None, (
+        "Beobachten-Tab hat das Stream-Ereignis nicht übernommen")
+    print("Beobachten-Tab OK: Stream-Ereignis verarbeitet")
 
     # Events pumpen, bis der Engine-Ping durch die Callback-Queue zurück ist.
     deadline = time.time() + args.seconds

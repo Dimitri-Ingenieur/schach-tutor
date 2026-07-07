@@ -11,6 +11,7 @@ import chess
 
 import config
 from engine_hub import EngineHub
+from live_tab import LiveTab
 from opponent_tab import OpponentTab
 from puzzle_tab import PuzzleTab
 from training_tab import TrainingTab
@@ -30,9 +31,11 @@ class ChessTutorApp(tk.Tk):
         self.training_tab = TrainingTab(self.notebook, self)
         self.puzzle_tab = PuzzleTab(self.notebook, self)
         self.opponent_tab = OpponentTab(self.notebook, self)
+        self.live_tab = LiveTab(self.notebook, self)
         self.notebook.add(self.training_tab, text="  Training  ")
         self.notebook.add(self.puzzle_tab, text="  Rätsel  ")
         self.notebook.add(self.opponent_tab, text="  Gegner-Analyse  ")
+        self.notebook.add(self.live_tab, text="  Beobachten  ")
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.status_var = tk.StringVar(value="Engine wird gestartet …")
@@ -104,7 +107,10 @@ class ChessTutorApp(tk.Tk):
             "  Wiederholung nach dem Leitner-System.\n"
             "• Gegner-Analyse: PGN eines Spielers laden, Schwächen-\n"
             "  Dossier erzeugen, Partien reviewen und kritische\n"
-            "  Stellungen direkt weitertrainieren.")
+            "  Stellungen direkt weitertrainieren.\n"
+            "• Beobachten: laufende Partien live verfolgen\n"
+            "  (Lichess-Stream, Chess.com-Daily) – mit\n"
+            "  LC0-Bewertung in Echtzeit.")
 
     # ------------------------------------------------------------ Engine
 

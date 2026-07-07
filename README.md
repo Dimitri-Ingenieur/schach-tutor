@@ -44,6 +44,15 @@ konkrete **Vorbereitungs-Empfehlungen** („Endspiele anstreben“, „Eröffne 
 Zug für Zug reviewen; aus jeder Stellung heraus kannst du direkt gegen die
 Engine weitertrainieren („Ab hier gegen Engine trainieren“).
 
+**Beobachten** – Laufende Partien direkt in der App verfolgen. Lichess wird
+in Echtzeit gestreamt (öffentliche ND-JSON-API, automatischer Reconnect bei
+Verbindungsabbruch); bei Chess.com stellt die öffentliche API nur laufende
+*Daily*-Partien bereit, die alle 12 Sekunden abgefragt werden — Live-Blitz/
+Rapid ist dort nicht öffentlich zugänglich. Dazu Zugliste, Uhren und auf
+Wunsch die **LC0-Bewertung in Echtzeit** (Balken + beste Fortsetzung) —
+ideal, um den nächsten Gegner beim Spielen zu scouten. Endet die Partie,
+lässt sie sich direkt über den Import im Gegner-Analyse-Tab auswerten.
+
 ## Installation
 
 ```bash
@@ -190,6 +199,8 @@ opponent.py       PGN-Batch-Analyse, Cache, Profil, Dossier-Text
 puzzles.py        Rätsel-Erzeugung (Eindeutigkeit, Mattlinien), Leitner-Deck
 opponent_book.py  Polyglot-Buch aus den Zügen eines Spielers
 lichess.py        Partien-Export über die Lichess-API
+live.py           Laufende Partien: Lichess-Stream, Chess.com-Daily
+live_tab.py       Beobachten-Tab (Live-Brett, Uhren, Echtzeit-Bewertung)
 chesscom.py       Partien-Export über die Chess.com-API (Monatsarchive)
 puzzle_tab.py     Rätsel-Training (Lösen, Tipps, Statistik)
 pieces.py         Eingebettete Cburnett-Figurenbilder (PNG/Base64)
