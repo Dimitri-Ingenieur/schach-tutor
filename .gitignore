@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+settings.json
+cache/
+puzzles.json
+lichess_*.pgn
+gegner_*.bin
