@@ -292,7 +292,21 @@ class BoardWidget(tk.Canvas):
                                 command=lambda p=pt: (result.update(pt=p),
                                                       win.destroy()))
             btn.pack(side=tk.LEFT, padx=4, pady=4)
-        win.grab_set()
+        # grab_set() setzt voraus, dass das Fenster vom Window Manager
+        # bereits gemappt ("viewable") wurde. Direkt nach dem Erzeugen ist
+        # das nicht garantiert -> "grab failed: window not viewable",
+        # besonders unter Last (z. B. während die Engine gerade eine
+        # Netzdatei lädt) oder mit "trägeren" Window Managern. Fix: erst
+        # auf Sichtbarkeit warten, dann grabben. Zusätzlich defensiv
+        # abgesichert, damit ein exotischer WM den Klick-Handler nie mehr
+        # zum Absturz bringen kann (sonst bliebe außerdem `selected`
+        # hängen und der nächste Klick würfe denselben Fehler erneut).
+        try:
+            win.update_idletasks()
+            win.wait_visibility()
+            win.grab_set()
+        except tk.TclError:
+            pass   # Dialog bleibt dann eben nicht-modal nutzbar
         win.wait_window()
         return result["pt"]
 

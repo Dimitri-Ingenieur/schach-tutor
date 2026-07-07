@@ -11,6 +11,7 @@ Headless (CI/Server): xvfb-run -a python3 gui_smoke.py
 
 import argparse
 import time
+import tkinter as tk
 
 import config
 
@@ -44,6 +45,28 @@ def main() -> None:
     app.training_tab.eval_bar.set_eval(63.0, "+0.55")
     app.training_tab.eval_bar.set_eval(12.0, "-2.10")
     app.update()
+
+    # Umwandlungsdialog wirklich auslösen (hier saß der grab_set-Bug: er
+    # zeigte sich nur mit echtem Window Manager, s. gui_smoke.py-Historie).
+    import chess
+    bw = app.training_tab.board_widget
+    bw.set_position(chess.Board("8/P6k/8/8/8/8/8/7K w - - 0 1"))
+    app.update()
+
+    def click_promo_choice(tries=0):
+        for w in bw.winfo_children():
+            if isinstance(w, tk.Toplevel):
+                w.winfo_children()[0].invoke()   # erste Option = Dame
+                return
+        if tries < 100:
+            app.after(30, click_promo_choice, tries + 1)
+
+    app.after(50, click_promo_choice)
+    promo_move = bw._build_move(chess.A7, chess.A8)
+    app.update()
+    assert promo_move is not None and promo_move.promotion == chess.QUEEN, (
+        f"Umwandlungsdialog lieferte kein gültiges Ergebnis: {promo_move}")
+    print("Umwandlungsdialog OK:", promo_move.uci())
 
     # Events pumpen, bis der Engine-Ping durch die Callback-Queue zurück ist.
     deadline = time.time() + args.seconds
