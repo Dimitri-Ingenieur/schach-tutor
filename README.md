@@ -138,11 +138,14 @@ Dann im Training-Tab eine neue Partie starten: Die Engine eröffnet mit
 seinem Repertoire und spielt danach wie ein Mensch seiner Stärke. Die
 Widerlegungs-Rätsel aus seinen konkreten Fehlern ergänzen das Training.
 
-**Alle Partien nutzen (Lichess-Import):** Im Gegner-Analyse-Tab einfach den
-Lichess-Nutzernamen eintragen und „Von Lichess laden" klicken — das Tool
-zieht bis zu 2000 gewertete Partien (Blitz/Rapid/Klassisch) über die
-öffentliche API (Drossel ~20 Partien/s, also ~1–2 Minuten für 1400) und
-lädt sie direkt in die Partienliste. Alternativ per Hand:
+**Alle Partien nutzen (Lichess- & Chess.com-Import):** Im Gegner-Analyse-Tab
+die Quelle wählen (Lichess oder Chess.com), Nutzernamen eintragen, „Partien
+laden" — das Tool zieht bis zu 2000 gewertete Partien über die jeweilige
+öffentliche API und lädt sie direkt in die Partienliste. Lichess liefert
+einen PGN-Stream (Drossel ~20 Partien/s, also ~1–2 Minuten für 1400);
+Chess.com wird über die Monatsarchive der Published-Data-API vom neuesten
+Monat rückwärts eingesammelt (nur Standard-Schach — Varianten wie Chess960
+werden übersprungen — gewertet, Blitz/Rapid/Daily). Alternativ per Hand:
 `curl -H "Accept: application/x-chess-pgn"
 "https://lichess.org/api/games/user/<NAME>?max=2000&rated=true&perfType=blitz,rapid,classical"
 -o gegner.pgn`. Empfehlung bei großen Archiven: Das **Gegner-Buch** immer aus
@@ -187,6 +190,7 @@ opponent.py       PGN-Batch-Analyse, Cache, Profil, Dossier-Text
 puzzles.py        Rätsel-Erzeugung (Eindeutigkeit, Mattlinien), Leitner-Deck
 opponent_book.py  Polyglot-Buch aus den Zügen eines Spielers
 lichess.py        Partien-Export über die Lichess-API
+chesscom.py       Partien-Export über die Chess.com-API (Monatsarchive)
 puzzle_tab.py     Rätsel-Training (Lösen, Tipps, Statistik)
 pieces.py         Eingebettete Cburnett-Figurenbilder (PNG/Base64)
 openings.py       Eröffnungsnamen (Familien-Ebene)

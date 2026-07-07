@@ -14,6 +14,7 @@ import chess.pgn
 
 from analysis import feedback_text
 from board_widget import ARROW_BAD, BoardWidget
+import chesscom
 import config
 import lichess
 from opponent_book import build_book
@@ -41,12 +42,17 @@ class OpponentTab(ttk.Frame):
                    command=self.load_pgn).pack(side=tk.LEFT)
         self.file_var = tk.StringVar(value="keine Datei geladen")
         ttk.Label(top, textvariable=self.file_var).pack(side=tk.LEFT, padx=8)
-        ttk.Label(top, text="   oder Lichess-Nutzer:").pack(side=tk.LEFT)
+        ttk.Label(top, text="   oder online:").pack(side=tk.LEFT)
+        self.source_var = tk.StringVar(value="Lichess")
+        ttk.Combobox(top, textvariable=self.source_var, width=10,
+                     state="readonly",
+                     values=["Lichess", "Chess.com"]).pack(side=tk.LEFT,
+                                                           padx=(4, 0))
         self.lichess_var = tk.StringVar()
         ttk.Entry(top, textvariable=self.lichess_var,
                   width=16).pack(side=tk.LEFT, padx=4)
-        self.lichess_btn = ttk.Button(top, text="Von Lichess laden",
-                                      command=self.load_from_lichess)
+        self.lichess_btn = ttk.Button(top, text="Partien laden",
+                                      command=self.load_from_online)
         self.lichess_btn.pack(side=tk.LEFT)
 
         row2 = ttk.Frame(self)
@@ -273,39 +279,56 @@ class OpponentTab(ttk.Frame):
 
     # ------------------------------------------------------- Lichess
 
-    def load_from_lichess(self) -> None:
+    def load_from_online(self) -> None:
+        source = self.source_var.get()
         user = self.lichess_var.get().strip()
         if not user:
-            messagebox.showinfo("Lichess",
-                                "Bitte einen Lichess-Nutzernamen eingeben.")
+            messagebox.showinfo(source,
+                                f"Bitte einen {source}-Nutzernamen eingeben.")
             return
-        dest = os.path.join(config.APP_DIR, f"lichess_{user}.pgn")
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", user)
+        prefix = "lichess" if source == "Lichess" else "chesscom"
+        dest = os.path.join(config.APP_DIR, f"{prefix}_{safe}.pgn")
         self.lichess_btn.configure(state=tk.DISABLED)
-        self.prog_var.set("Lichess-Download … (drosselt auf ~20 Partien/s)")
+        self.prog_var.set(f"{source}-Download …")
         dispatch = self.app.dispatch
 
         def worker():
             try:
-                def prog(nbytes):
-                    dispatch(lambda n=nbytes: self.prog_var.set(
-                        f"Lichess-Download … {n // 1024} KiB"))
-                lichess.download_games(user, dest, progress=prog)
+                if source == "Lichess":
+                    def prog(nbytes):
+                        dispatch(lambda n=nbytes: self.prog_var.set(
+                            f"Lichess-Download … {n // 1024} KiB "
+                            f"(drosselt auf ~20 Partien/s)"))
+                    lichess.download_games(user, dest, progress=prog)
+                else:
+                    def prog(ngames, month):
+                        dispatch(lambda n=ngames, m=month:
+                                 self.prog_var.set(
+                                     f"Chess.com-Download … {n} Partien "
+                                     f"(Archiv {m})"))
+                    n = chesscom.download_games(user, dest, progress=prog)
+                    if n == 0:
+                        raise RuntimeError(
+                            "Keine passenden Partien gefunden (nur "
+                            "gewertete Standard-Partien in Blitz/Rapid/"
+                            "Daily werden übernommen).")
             except Exception as exc:
                 dispatch(lambda e=exc: self._lichess_done(None, e))
                 return
             dispatch(lambda: self._lichess_done(dest, None))
 
         threading.Thread(target=worker, daemon=True,
-                         name="LichessDownload").start()
+                         name="OnlineDownload").start()
 
     def _lichess_done(self, path, err) -> None:
         self.lichess_btn.configure(state=tk.NORMAL)
         if err is not None:
-            self.prog_var.set("Lichess-Download fehlgeschlagen.")
-            messagebox.showerror("Lichess",
+            self.prog_var.set("Download fehlgeschlagen.")
+            messagebox.showerror("Partien-Download",
                                  f"Download fehlgeschlagen:\n{err}")
             return
-        self.prog_var.set("Lichess-Download fertig.")
+        self.prog_var.set("Download fertig.")
         self._load_pgn_file(path)
 
     # ---------------------------------------------------- Gegner-Buch

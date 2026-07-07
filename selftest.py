@@ -9,6 +9,7 @@ Beispiele:
 
 import argparse
 import io
+import json
 import os
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import config
 from analysis import feedback_text, judge_move, normalize_info
 from opponent import analyze_game, build_profile, render_report
 from opponent_book import build_book
+import chesscom
 import lichess
 from puzzles import (THEME_LABELS, PuzzleDB, check_move_sync,
                      generate_punish_puzzles, generate_puzzles)
@@ -250,6 +252,56 @@ def main():
             ok &= check("ungültiger Name wird abgelehnt", False)
         except ValueError:
             ok &= check("ungültiger Name wird abgelehnt", True)
+
+        # --- Test 9: Chess.com-Download (Offline-Stub) -------------------
+        print("\nTest 9 – Chess.com-Export (Monatsarchive, Stub):")
+        P = lambda ev: f'[Event "{ev}"]\n[Result "*"]\n\n1. e4 e5 *'
+        base = "https://api.chess.com/pub/player/testspieler42/games"
+        payloads = {
+            base + "/archives": {"archives": [base + "/2026/05",
+                                              base + "/2026/06"]},
+            base + "/2026/05": {"games": [
+                {"pgn": P("ALT"), "rules": "chess", "rated": True,
+                 "time_class": "rapid"}]},
+            base + "/2026/06": {"games": [
+                {"pgn": P("JUNI_A"), "rules": "chess", "rated": True,
+                 "time_class": "blitz"},
+                {"pgn": P("VARIANTE"), "rules": "chess960", "rated": True,
+                 "time_class": "blitz"},
+                {"pgn": P("JUNI_B"), "rules": "chess", "rated": True,
+                 "time_class": "rapid"},
+                {"pgn": P("BULLET"), "rules": "chess", "rated": True,
+                 "time_class": "bullet"},
+                {"pgn": P("UNGEWERTET"), "rules": "chess", "rated": False,
+                 "time_class": "blitz"}]},
+        }
+
+        def cc_opener(req):
+            return io.BytesIO(json.dumps(payloads[req.full_url]).encode())
+
+        with tempfile.TemporaryDirectory() as td:
+            dest = os.path.join(td, "cc.pgn")
+            n = chesscom.download_games("testspieler42", dest, max_games=10,
+                                        opener=cc_opener)
+            txt = open(dest, encoding="utf-8").read()
+            ok &= check("3 Standard-Partien übernommen", n == 3)
+            ok &= check("Varianten/Bullet/Ungewertet gefiltert",
+                        all(x not in txt for x in
+                            ("VARIANTE", "BULLET", "UNGEWERTET")))
+            ok &= check("chronologische Reihenfolge (ALT vor JUNI)",
+                        -1 < txt.find("ALT") < txt.find("JUNI_A")
+                        < txt.find("JUNI_B"))
+            n2 = chesscom.download_games("testspieler42", dest, max_games=1,
+                                         opener=cc_opener)
+            txt2 = open(dest, encoding="utf-8").read()
+            ok &= check("max_games greift (nur neueste Partie)",
+                        n2 == 1 and "JUNI_B" in txt2 and "ALT" not in txt2)
+        try:
+            chesscom.download_games("../evil", "/tmp/x.pgn",
+                                    opener=cc_opener)
+            ok &= check("ungültiger Chess.com-Name wird abgelehnt", False)
+        except ValueError:
+            ok &= check("ungültiger Chess.com-Name wird abgelehnt", True)
 
     finally:
         engine.quit()
