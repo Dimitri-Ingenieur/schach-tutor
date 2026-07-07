@@ -69,15 +69,55 @@ def main() -> None:
         f"Umwandlungsdialog lieferte kein gültiges Ergebnis: {promo_move}")
     print("Umwandlungsdialog OK:", promo_move.uci())
 
-    # Beobachten-Tab: ein Stream-Ereignis durch den echten Pfad schicken.
-    ev = {"fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR "
-                 "b KQkq - 0 1",
-          "lm": "e2e4", "wc": 180, "bc": 180}
-    app.live_tab._apply_stream_event(app.live_tab._gen, ev)
+    # Beobachten-Tab: kompletten Stream-Ablauf simulieren — Beschreibung,
+    # stilles Aufholen (Replay ab Zug 1), dann Live-Zug mit Nummerierung.
+    lt = app.live_tab
+    lt.state = "watching"
+    lt.board = chess.Board()
+    lt._sboard = None
+    lt._live = False
+    lt._catchup_to = 0
+    lt._pending = []
+    lt._clear_log()
+    gen = lt._gen
+    lt._apply_stream_event(gen, {"id": "smoke123", "speed": "blitz",
+                                 "turns": 2, "players": {}})
+    b = chess.Board()
+    b.push_uci("e2e4")
+    lt._apply_stream_event(gen, {"fen": b.fen(), "lm": "e2e4"})
+    b.push_uci("c7c6")
+    lt._apply_stream_event(gen, {"fen": b.fen(), "lm": "c7c6"})
+    b.push_uci("d2d4")
+    lt._apply_stream_event(gen, {"fen": b.fen(), "lm": "d2d4",
+                                 "wc": 180, "bc": 179})
     app.update()
-    assert app.live_tab.board.piece_at(chess.E4) is not None, (
-        "Beobachten-Tab hat das Stream-Ereignis nicht übernommen")
-    print("Beobachten-Tab OK: Stream-Ereignis verarbeitet")
+    logtxt = lt.log.get("1.0", "end")
+    assert "Bisher: 1. e4  1… c6" in logtxt, f"Aufhol-Zeile fehlt: {logtxt!r}"
+    assert "2. d4" in logtxt, f"Live-Zug fehlt/falsch nummeriert: {logtxt!r}"
+    assert logtxt.count("1. e4") == 1, "Züge doppelt geloggt"
+    assert lt.board.piece_at(chess.D4) is not None, "Brett nicht aktuell"
+
+    # Reconnect simulieren: Lichess spielt danach ALLES ab Zug 1 erneut
+    # vor — es darf keine einzige Zeile doppelt erscheinen, und die
+    # "Bisher"-Zeile darf nicht erneut auftauchen. Nur der wirklich neue
+    # Zug (3... d5) wird geloggt.
+    lt._prepare_stream(lt._gen)
+    replay = chess.Board()
+    for uci in ("e2e4", "c7c6", "d2d4"):
+        replay.push_uci(uci)
+        lt._apply_stream_event(lt._gen, {"fen": replay.fen(), "lm": uci})
+    replay.push_uci("d7d5")
+    lt._apply_stream_event(lt._gen, {"fen": replay.fen(), "lm": "d7d5",
+                                     "wc": 170, "bc": 168})
+    app.update()
+    logtxt = lt.log.get("1.0", "end")
+    assert logtxt.count("Bisher:") == 1, f"Bisher doppelt: {logtxt!r}"
+    assert logtxt.count("1. e4") == 1, f"Replay doppelt geloggt: {logtxt!r}"
+    assert logtxt.count("2. d4") == 1, f"Replay doppelt geloggt: {logtxt!r}"
+    assert logtxt.count("2… d5") == 1, f"neuer Zug fehlt: {logtxt!r}"
+    lt.stop_watching()
+    print("Beobachten-Tab OK: Aufholphase still, Nummerierung korrekt, "
+          "Reconnect ohne Duplikate")
 
     # Events pumpen, bis der Engine-Ping durch die Callback-Queue zurück ist.
     deadline = time.time() + args.seconds

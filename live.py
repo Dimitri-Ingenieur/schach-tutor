@@ -54,7 +54,7 @@ def lichess_current_game(user: str,
 
 def stream_game(game_id: str, on_event: Callable[[dict], None],
                 stop, opener: Optional[Callable] = None,
-                timeout: float = 15.0) -> int:
+                timeout: float = 25.0) -> int:
     """Liest den Live-Stream einer Partie und ruft on_event je Zeile auf.
 
     Blockiert, bis der Stream endet, `stop` gesetzt wird oder die

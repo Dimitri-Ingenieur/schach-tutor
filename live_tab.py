@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
 """Beobachten-Tab: laufende Partien von Lichess (live) / Chess.com (Daily).
 
-Architektur wie im Rest der App: Netzwerk läuft in einem Hintergrund-Thread,
-alle GUI-Updates werden über die Callback-Queue (`app.dispatch`) in den
-Tk-Mainloop gehoben; ein Generationszähler entwertet veraltete Ereignisse.
-Die optionale Live-Bewertung nutzt den vorhandenen EngineHub.
+Wichtige Eigenheit der Lichess-API (in der Praxis verifiziert): Der
+Positions-Stream einer Partie liefert nach der Beschreibungszeile die
+KOMPLETTE Zugfolge von Zug 1 an und geht dann nahtlos in Echtzeit über.
+Der Tab spielt diese Aufholphase deshalb still auf einem separaten
+Replay-Brett nach (keine Brett-Sprünge, keine Log-Flut, keine
+Engine-Aufrufe) und schaltet erst ab dem aktuellen Stand auf
+Live-Anzeige um. Nach einem Reconnect passiert dasselbe automatisch.
+
+Architektur wie im Rest der App: Netzwerk im Hintergrund-Thread, alle
+GUI-Updates über die Callback-Queue (`app.dispatch`), Generationszähler
+gegen veraltete Ereignisse, Live-Bewertung entprellt über den EngineHub.
 """
 
 import io
@@ -13,17 +20,28 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Optional
+from typing import List, Optional
 
 import chess
 import chess.pgn
 
 import live
-from analysis import win_pct
+from analysis import san_line, win_pct
 from board_widget import BoardWidget, EvalBar
 
 POLL_SECONDS = 12          # Chess.com-Daily-Abfrageintervall
 RECONNECT_SECONDS = 3      # Pause vor Lichess-Reconnect
+EVAL_DEBOUNCE_MS = 400     # Live-Bewertung erst, wenn kurz Ruhe ist
+
+
+def _board_from_fen(fen: str) -> Optional[chess.Board]:
+    """FEN robust parsen (auch ohne Zähler-Felder)."""
+    for candidate in (fen, fen + " 0 1", fen + " - - 0 1"):
+        try:
+            return chess.Board(candidate)
+        except ValueError:
+            continue
+    return None
 
 
 class LiveTab(ttk.Frame):
@@ -33,9 +51,18 @@ class LiveTab(ttk.Frame):
         self.state = "idle"            # idle | watching
         self._gen = 0
         self._stop: Optional[threading.Event] = None
-        self.board = chess.Board()
         self.watch_user = ""
+
+        self.board = chess.Board()     # angezeigter Stand
+        self._sboard: Optional[chess.Board] = None   # Replay-Brett (Stream)
+        self._initial_fen = chess.STARTING_FEN
+        self._catchup_to = 0           # bis zu diesem Ply still aufholen
+        self._live = False             # Aufholphase abgeschlossen?
+        self._pending: List[str] = []  # still aufgeholte Züge (für 1 Zeile)
+
         self._eval_gen = 0
+        self._eval_after: Optional[str] = None
+        self._shown_history = False
         self._build_ui()
 
     # ------------------------------------------------------------ UI
@@ -99,6 +126,11 @@ class LiveTab(ttk.Frame):
         self.log.see(tk.END)
         self.log.configure(state=tk.DISABLED)
 
+    def _clear_log(self) -> None:
+        self.log.configure(state=tk.NORMAL)
+        self.log.delete("1.0", tk.END)
+        self.log.configure(state=tk.DISABLED)
+
     # ------------------------------------------------------- Steuerung
 
     def start_watching(self) -> None:
@@ -114,9 +146,13 @@ class LiveTab(ttk.Frame):
         self.watch_user = user
         self.watch_btn.configure(state=tk.DISABLED)
         self.stop_btn.configure(state=tk.NORMAL)
-        self.log.configure(state=tk.NORMAL)
-        self.log.delete("1.0", tk.END)
-        self.log.configure(state=tk.DISABLED)
+        self._clear_log()
+        self.board = chess.Board()
+        self._sboard = None
+        self._live = False
+        self._catchup_to = 0
+        self._pending = []
+        self._shown_history = False
         source = self.source_var.get()
         self.status_var.set(f"Suche laufende Partie von {user} …")
         target = (self._watch_lichess if source == "Lichess"
@@ -126,6 +162,13 @@ class LiveTab(ttk.Frame):
 
     def stop_watching(self) -> None:
         self._gen += 1
+        self._eval_gen += 1
+        if self._eval_after is not None:
+            try:
+                self.after_cancel(self._eval_after)
+            except ValueError:
+                pass
+            self._eval_after = None
         if self._stop is not None:
             self._stop.set()
         if self.state == "watching":
@@ -147,6 +190,8 @@ class LiveTab(ttk.Frame):
         dispatch(lambda: self._apply_snapshot(gen, game))
         gid = str(game.get("id", ""))
         while not stop.is_set():
+            # Vor jedem (Re-)Connect: still bis zum bekannten Stand aufholen.
+            dispatch(lambda: self._prepare_stream(gen))
             try:
                 live.stream_game(
                     gid,
@@ -162,25 +207,44 @@ class LiveTab(ttk.Frame):
                 continue
             if stop.is_set():
                 return
-            # Stream endete ohne Stopp: Partie vermutlich vorbei — kurz
-            # prüfen, ob eine neue läuft, sonst sauber beenden.
+            # Stream endete ohne Stopp: entweder Partie vorbei oder die
+            # Verbindung war nur still (Timeout) → Stand prüfen.
             try:
                 nxt = live.lichess_current_game(user)
-                if str(nxt.get("id", "")) not in ("", gid):
-                    gid = str(nxt.get("id"))
-                    dispatch(lambda: self._apply_snapshot(gen, nxt))
-                    continue
             except Exception:
-                pass
+                dispatch(lambda: self._finished(gen))
+                return
+            nid = str(nxt.get("id", ""))
+            running = str(nxt.get("status", "")) in ("started", "created")
+            if nid == gid and running:
+                time.sleep(1.0)          # Denkpause/Timeout → reconnect
+                continue
+            if nid and nid != gid and running:
+                gid = nid                # er spielt schon die nächste
+                dispatch(lambda: self._apply_snapshot(gen, nxt))
+                continue
             dispatch(lambda: self._finished(gen))
             return
 
+    def _prepare_stream(self, gen: int) -> None:
+        """Replay-Brett zurücksetzen; bis zum aktuellen Stand still bleiben."""
+        if gen != self._gen:
+            return
+        self._sboard = None
+        self._live = False
+        self._pending = []
+        self._catchup_to = max(self._catchup_to, self.board.ply())
+
     def _apply_snapshot(self, gen: int, game: dict) -> None:
-        """Erster Stand aus /current-game (Züge als SAN-Liste)."""
+        """Snapshot aus /current-game: Metadaten + sofortige Brett-Anzeige."""
         if gen != self._gen:
             return
         board, sans = live.board_from_san(game.get("moves", ""))
-        self.board = board
+        initial = game.get("initialFen", "")
+        if initial and initial != "startpos":
+            b0 = _board_from_fen(initial)
+            if b0 is not None:
+                self._initial_fen = b0.fen()
         players = game.get("players", {})
 
         def pname(side):
@@ -195,52 +259,113 @@ class LiveTab(ttk.Frame):
         me_black = self.watch_user.lower() in str(
             players.get("black", {})).lower()
         self.board_widget.set_flipped(me_black)
+        self.board = board
+        self._catchup_to = max(self._catchup_to, board.ply())
         last = board.peek() if board.move_stack else None
         self.board_widget.set_position(board, last)
         speed = game.get("speed", "")
         self.status_var.set(f"Live: {white} – {black} ({speed})")
-        if sans:
-            self._feed("Bisher: " + " ".join(sans))
-        self._request_eval(board)
+        self._request_eval_debounced()
 
     def _apply_stream_event(self, gen: int, d: dict) -> None:
-        """Eine Zeile aus dem Lichess-Stream (voll oder {fen, lm, wc, bc})."""
+        """Eine Zeile aus dem Lichess-Stream.
+
+        Erste Zeile: Beschreibung (id/players/…) → nur Metadaten.
+        Danach: die komplette Zugfolge ab Zug 1, dann live weiter —
+        bis `_catchup_to` wird still auf dem Replay-Brett nachgespielt.
+        """
         if gen != self._gen:
             return
+
+        # Beschreibungszeile erkennen (kein reines Zug-Update)
+        if "id" in d and ("players" in d or "initialFen" in d
+                          or "speed" in d or "variant" in d):
+            initial = d.get("initialFen", "")
+            if initial and initial != "startpos":
+                b0 = _board_from_fen(initial)
+                if b0 is not None:
+                    self._initial_fen = b0.fen()
+            turns = d.get("turns")
+            if isinstance(turns, int):
+                self._catchup_to = max(self._catchup_to, turns)
+            if self._status_finished(d.get("status")):
+                self._finished(gen)
+            return
+
         fen = d.get("fen")
         if not fen:
             return
-        try:
-            new_board = chess.Board(fen)
-        except ValueError:
-            return
+        if self._sboard is None:
+            self._sboard = chess.Board(self._initial_fen)
+
+        # Zug einordnen: normal weiterschieben oder notfalls resynchronisieren
         lm = d.get("lm") or d.get("lastMove") or ""
-        last_move = None
         san = ""
+        move_no = self._sboard.fullmove_number
+        was_black = self._sboard.turn == chess.BLACK
+        mv = None
         try:
             mv = chess.Move.from_uci(lm) if lm else None
-            if mv is not None:
-                if self.board.is_legal(mv):
-                    san = self.board.san(mv)
-                last_move = mv
         except ValueError:
-            pass
-        self.board = new_board
-        self.board_widget.set_position(new_board, last_move)
+            mv = None
+        if mv is not None and self._sboard.is_legal(mv):
+            san = self._sboard.san(mv)
+            self._sboard.push(mv)
+            if self._sboard.board_fen() != fen.split()[0]:
+                # Stream und Replay auseinandergelaufen → hart übernehmen
+                resync = _board_from_fen(fen)
+                if resync is not None:
+                    self._sboard = resync
+                san = ""
+        else:
+            resync = _board_from_fen(fen)
+            if resync is None:
+                return
+            self._sboard = resync
+
+        entry = ""
         if san:
-            no = new_board.fullmove_number
-            dots = "…" if new_board.turn == chess.WHITE else "."
-            self._feed(f"{no if dots == '…' else no}{dots} {san}")
+            entry = (f"{move_no}… {san}" if was_black
+                     else f"{move_no}. {san}")
+
+        caught_up = self._sboard.ply() >= self._catchup_to
+
+        if not caught_up:
+            # Aufholphase: still sammeln, Brett/Engine/Uhr nicht anfassen.
+            if entry:
+                self._pending.append(entry)
+            return
+
+        if not self._live:
+            self._live = True
+            if entry:
+                self._pending.append(entry)
+                entry = ""
+            if self._pending and not self._shown_history:
+                self._feed("Bisher: " + "  ".join(self._pending))
+                self._shown_history = True
+            self._pending = []
+
+        self.board = self._sboard.copy()
+        self.board_widget.set_position(self.board, mv)
+        if entry:
+            self._feed(entry)
         wc, bc = d.get("wc"), d.get("bc")
         if wc is not None or bc is not None:
             self.clock_var.set(f"Uhr — Weiß: {live.fmt_clock(wc)}   "
                                f"Schwarz: {live.fmt_clock(bc)}")
-        status = d.get("status", {})
-        if isinstance(status, dict) and status.get("name") not in (
-                None, "started", "created"):
+        if self._status_finished(d.get("status")):
             self._finished(gen)
             return
-        self._request_eval(new_board)
+        self._request_eval_debounced()
+
+    @staticmethod
+    def _status_finished(status) -> bool:
+        if isinstance(status, dict):
+            return status.get("name") not in (None, "started", "created")
+        if isinstance(status, str):
+            return status not in ("", "started", "created")
+        return False
 
     # --------------------------------------------- Chess.com (Polling)
 
@@ -274,9 +399,8 @@ class LiveTab(ttk.Frame):
     def _apply_daily(self, gen: int, game: dict, n_games: int) -> None:
         if gen != self._gen:
             return
-        try:
-            board = chess.Board(game.get("fen", chess.STARTING_FEN))
-        except ValueError:
+        board = _board_from_fen(game.get("fen", chess.STARTING_FEN))
+        if board is None:
             return
         self.board = board
         white = str(game.get("white", "")).rsplit("/", 1)[-1]
@@ -296,28 +420,41 @@ class LiveTab(ttk.Frame):
                 g = chess.pgn.read_game(io.StringIO(pgn))
                 if g is not None:
                     b = g.board()
-                    sans = []
+                    parts = []
                     for mv in g.mainline_moves():
-                        sans.append(b.san(mv))
+                        prefix = (f"{b.fullmove_number}. "
+                                  if b.turn == chess.WHITE else "")
+                        parts.append(prefix + b.san(mv))
                         b.push(mv)
-                    self.log.configure(state=tk.NORMAL)
-                    self.log.delete("1.0", tk.END)
-                    self.log.configure(state=tk.DISABLED)
-                    self._feed("Bisher: " + " ".join(sans))
+                    self._clear_log()
+                    self._feed("Bisher: " + " ".join(parts))
             except Exception:
                 pass
-        self._request_eval(board)
+        self._request_eval_debounced()
 
     # ------------------------------------------------------ Bewertung
 
-    def _request_eval(self, board: chess.Board) -> None:
+    def _request_eval_debounced(self) -> None:
+        """Bewertet erst, wenn kurz keine neue Stellung mehr kam."""
+        if self._eval_after is not None:
+            try:
+                self.after_cancel(self._eval_after)
+            except ValueError:
+                pass
+        self._eval_after = self.after(EVAL_DEBOUNCE_MS, self._request_eval)
+
+    def _request_eval(self) -> None:
+        self._eval_after = None
         hub = self.app.hub
-        if not self.eval_var.get() or hub is None or board.is_game_over():
+        board = self.board
+        if (not self.eval_var.get() or hub is None
+                or self.state != "watching" or board.is_game_over()):
             return
         self._eval_gen += 1
         egen = self._eval_gen
         gen = self._gen
         nodes = int(self.app.settings.get("analysis_nodes", 600))
+        snapshot = board.copy()
 
         def done(infos, err):
             if gen != self._gen or egen != self._eval_gen:
@@ -327,12 +464,11 @@ class LiveTab(ttk.Frame):
             info = infos[0]
             wp = win_pct(info.score.cp(chess.WHITE))
             self.eval_bar.set_eval(wp, info.score.fmt(chess.WHITE))
-            from analysis import san_line
-            line = san_line(board, info.pv, 6)
+            line = san_line(snapshot, info.pv, 6)
             self.eval_line_var.set(
                 f"LC0: {info.score.fmt(chess.WHITE)}   {line}")
 
-        hub.analyse(board.copy(), nodes, multipv=1, cb=done)
+        hub.analyse(snapshot, nodes, multipv=1, cb=done)
 
     # ------------------------------------------------------- Abschluss
 
