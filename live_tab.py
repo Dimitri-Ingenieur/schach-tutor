@@ -32,6 +32,7 @@ from board_widget import BoardWidget, EvalBar
 POLL_SECONDS = 12          # Chess.com-Daily-Abfrageintervall
 RECONNECT_SECONDS = 3      # Pause vor Lichess-Reconnect
 EVAL_DEBOUNCE_MS = 400     # Live-Bewertung erst, wenn kurz Ruhe ist
+EVAL_MAX_WAIT_MS = 1500    # ...aber spätestens nach dieser Zeit zwingend (sonst verhungert der Entpreller bei schnellem Spiel)
 
 
 def _board_from_fen(fen: str) -> Optional[chess.Board]:
@@ -62,6 +63,7 @@ class LiveTab(ttk.Frame):
 
         self._eval_gen = 0
         self._eval_after: Optional[str] = None
+        self._last_eval_at = 0.0
         self._shown_history = False
         self._delay_noted = False
         self._build_ui()
@@ -143,6 +145,7 @@ class LiveTab(ttk.Frame):
         self._gen += 1
         gen = self._gen
         self._stop = threading.Event()
+        self._eval_gen += 1
         self.state = "watching"
         self.watch_user = user
         self.watch_btn.configure(state=tk.DISABLED)
@@ -164,7 +167,10 @@ class LiveTab(ttk.Frame):
 
     def stop_watching(self) -> None:
         self._gen += 1
-        self._eval_gen += 1
+        # _eval_gen absichtlich NICHT hier hochzählen: eine gerade erst
+        # losgeschickte Bewertung (z. B. die Schlussstellung aus
+        # _finished()) soll noch ankommen dürfen. Eine neue Beobachtung
+        # invalidiert über start_watching() ohnehin sauber.
         if self._eval_after is not None:
             try:
                 self.after_cancel(self._eval_after)
@@ -261,6 +267,7 @@ class LiveTab(ttk.Frame):
         me_black = self.watch_user.lower() in str(
             players.get("black", {})).lower()
         self.board_widget.set_flipped(me_black)
+        self.eval_bar.set_flipped(me_black)
         self.board = board
         self._catchup_to = max(self._catchup_to, board.ply())
         last = board.peek() if board.move_stack else None
@@ -415,8 +422,9 @@ class LiveTab(ttk.Frame):
         white = str(game.get("white", "")).rsplit("/", 1)[-1]
         black = str(game.get("black", "")).rsplit("/", 1)[-1]
         self.players_var.set(f"Weiß: {white}   ·   Schwarz: {black}")
-        self.board_widget.set_flipped(
-            self.watch_user.lower() == black.lower())
+        black_side = self.watch_user.lower() == black.lower()
+        self.board_widget.set_flipped(black_side)
+        self.eval_bar.set_flipped(black_side)
         self.board_widget.set_position(board)
         extra = (f" · {n_games} laufende Daily-Partien, zeige die aktivste"
                  if n_games > 1 else "")
@@ -444,29 +452,63 @@ class LiveTab(ttk.Frame):
     # ------------------------------------------------------ Bewertung
 
     def _request_eval_debounced(self) -> None:
-        """Bewertet erst, wenn kurz keine neue Stellung mehr kam."""
+        """Bewertet erst, wenn kurz keine neue Stellung mehr kam.
+
+        Reines "warte auf Ruhe" kann bei Blitz/Bullet (oder schnell
+        heruntergespielter Eröffnungstheorie) verhungern, wenn Züge
+        durchgehend schneller als EVAL_DEBOUNCE_MS aufeinanderfolgen —
+        dann feuert der Timer nie, die Bewertung bliebe für die ganze
+        Beobachtung beim Startwert stehen. Deshalb zusätzlich eine harte
+        Obergrenze: läuft seit der letzten tatsächlichen Bewertung schon
+        länger als EVAL_MAX_WAIT_MS, wird sofort ausgewertet statt erneut
+        zu verschieben.
+        """
         if self._eval_after is not None:
             try:
                 self.after_cancel(self._eval_after)
             except ValueError:
                 pass
-        self._eval_after = self.after(EVAL_DEBOUNCE_MS, self._request_eval)
+            self._eval_after = None
+        overdue = (time.monotonic() - self._last_eval_at) * 1000
+        if overdue >= EVAL_MAX_WAIT_MS:
+            self._request_eval()
+        else:
+            self._eval_after = self.after(EVAL_DEBOUNCE_MS,
+                                          self._request_eval)
+
+    @staticmethod
+    def _terminal_label(board: chess.Board) -> str:
+        if board.is_checkmate():
+            return "Matt"
+        if board.is_stalemate():
+            return "Patt"
+        return "Remis"
 
     def _request_eval(self) -> None:
         self._eval_after = None
+        self._last_eval_at = time.monotonic()
         hub = self.app.hub
         board = self.board
-        if (not self.eval_var.get() or hub is None
-                or self.state != "watching" or board.is_game_over()):
+        if not self.eval_var.get() or hub is None or self.state != "watching":
+            return
+        if board.is_game_over():
+            self.eval_bar.set_eval(50.0, self._terminal_label(board))
+            self.eval_line_var.set("Partie beendet.")
             return
         self._eval_gen += 1
         egen = self._eval_gen
-        gen = self._gen
         nodes = int(self.app.settings.get("analysis_nodes", 600))
         snapshot = board.copy()
 
         def done(infos, err):
-            if gen != self._gen or egen != self._eval_gen:
+            # Nur an _eval_gen prüfen, nicht an _gen: _gen ändert sich
+            # auch bei einem simplen Stopp (soll die letzte, schon
+            # unterwegs befindliche Bewertung nicht verwerfen — siehe
+            # _finished()). _eval_gen wird ausschließlich von einer
+            # wirklich neuen Beobachtung (start_watching) hochgezählt,
+            # das reicht als Schutz gegen ein verspätet eintreffendes
+            # Ergebnis einer alten Partie.
+            if egen != self._eval_gen:
                 return
             if err or not infos:
                 return
@@ -498,4 +540,10 @@ class LiveTab(ttk.Frame):
         self.status_var.set("Partie beendet.")
         self._feed("— Partie beendet. Über den Import im Gegner-Analyse-"
                    "Tab lässt sie sich gleich mit auswerten. —")
+        # Schlussstellung noch auswerten (wichtig, wenn die Partie beim
+        # Verbinden bereits vorbei war: der Stream meldet dann sofort den
+        # Endstatus, und ohne dies hier würde stop_watching() gleich
+        # darunter jede noch laufende/anstehende Bewertung abwürgen).
+        if self.state == "watching":
+            self._request_eval()
         self.stop_watching()

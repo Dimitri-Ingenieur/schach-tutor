@@ -156,7 +156,9 @@ class TrainingTab(ttk.Frame):
         self.eval_bar.set_eval(win_pct(cp), info.score.fmt(chess.WHITE))
 
     def _flip(self) -> None:
-        self.board_widget.set_flipped(not self.board_widget.flipped)
+        flipped = not self.board_widget.flipped
+        self.board_widget.set_flipped(flipped)
+        self.eval_bar.set_flipped(flipped)
 
     # ------------------------------------------------------------ Partie
 
@@ -180,6 +182,7 @@ class TrainingTab(ttk.Frame):
         self._pre = None
         self.decide_frame.pack_forget()
         self.board_widget.set_flipped(user_color == chess.BLACK)
+        self.eval_bar.set_flipped(user_color == chess.BLACK)
         last = self.board.move_stack[-1] if self.board.move_stack else None
         self.board_widget.set_position(self.board, last)
         self.board_widget.clear_arrows()

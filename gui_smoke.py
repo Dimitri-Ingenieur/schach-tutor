@@ -119,6 +119,67 @@ def main() -> None:
     print("Beobachten-Tab OK: Aufholphase still, Nummerierung korrekt, "
           "Reconnect ohne Duplikate")
 
+    # Live-Bewertung darf bei schnellem Spiel (Züge < Entpreller-Frist)
+    # nicht für die ganze Beobachtung beim Startwert hängen bleiben (hier
+    # saß der EVAL_MAX_WAIT_MS-Bug: reiner "warte auf Ruhe"-Entpreller
+    # verhungert bei Blitz/Bullet).
+    lt._catchup_to = 0
+    lt._sboard = None
+    lt._live = False
+    lt._pending = []
+    lt.state = "watching"
+    lt.eval_bar.set_eval(50.0, "0.0")   # definierter Ausgangspunkt
+    lt._last_eval_at = 0.0
+    fb = chess.Board()
+    for uci in ("e2e4", "c7c5", "g1f3", "d7d6", "d2d4", "c5d4", "f3d4",
+               "g8f6", "b1c3", "a7a6"):
+        fb.push_uci(uci)
+        lt._apply_stream_event(lt._gen, {"fen": fb.fen(), "lm": uci})
+        app.update()
+        time.sleep(0.15)                     # < EVAL_DEBOUNCE_MS
+        app.update()
+    assert lt.eval_bar._label != "0.0", (
+        "Live-Bewertung ist bei schnellem Spiel nie gefeuert (Entpreller "
+        "ohne Obergrenze verhungert) — Label steht noch auf Startwert")
+    lt.stop_watching()
+    print("Beobachten-Tab OK: Live-Bewertung verhungert nicht bei "
+          "schnellem Spiel (Label:", lt.eval_bar._label + ")")
+
+    # EvalBar muss mit der Brettdrehung mitgehen (hier saß der
+    # "Schwarz-immer-oben"-Bug: der Balken zeigte Weiß' Anteil auch dann
+    # noch von unten, wenn das Brett auf Schwarz gedreht war).
+    lt.eval_bar.set_flipped(False)
+    lt.eval_bar.set_eval(80.0, "+2.0")           # Weiß klar besser
+    lt.eval_bar.set_flipped(True)                # Brett zeigt jetzt Schwarz unten
+    flipped_bottom = 1.0 - lt.eval_bar._frac      # Schwarz' eigener Anteil
+    assert flipped_bottom < 0.3, (
+        f"EvalBar zeigt nach Flip nicht Schwarz' Anteil unten "
+        f"(erwartet klein, da Schwarz schlecht steht): {flipped_bottom}")
+    lt.eval_bar.set_flipped(False)
+    print("EvalBar-Drehung OK: folgt der Brettorientierung")
+
+    # Bereits beendete Partie beim Verbinden (Stream meldet sofortiges
+    # Ende, z. B. nach Aufgabe): die Schlussstellung muss trotzdem
+    # ausgewertet werden, statt vom Auto-Stopp abgewürgt zu werden.
+    lt.state = "watching"
+    lt._gen += 1
+    fgen = lt._gen
+    lt.board = chess.Board(
+        "r1bq1rk1/ppp2ppp/2n5/3np3/2B5/2N2N2/PPPP1PPP/R1BQ1RK1 w - - 4 9")
+    lt.eval_bar.set_eval(50.0, "0.0")
+    lt.eval_line_var.set("")
+    lt._finished(fgen)
+    t_end = time.time() + 6
+    while time.time() < t_end and lt.eval_bar._label == "0.0":
+        app.update()
+        time.sleep(0.02)
+    assert lt.eval_bar._label != "0.0", (
+        "Schlussstellung einer beim Verbinden bereits beendeten Partie "
+        "wurde nicht ausgewertet (stop_watching hat die Bewertung "
+        "abgewürgt)")
+    print("Beobachten-Tab OK: Schlussstellung wird trotz Auto-Stopp "
+         "noch bewertet (Label:", lt.eval_bar._label + ")")
+
     # Events pumpen, bis der Engine-Ping durch die Callback-Queue zurück ist.
     deadline = time.time() + args.seconds
     while time.time() < deadline:

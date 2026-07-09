@@ -312,15 +312,23 @@ class BoardWidget(tk.Canvas):
 
 
 class EvalBar(tk.Canvas):
-    """Vertikaler Bewertungsbalken (weißer Anteil = Gewinnchance Weiß)."""
+    """Vertikaler Bewertungsbalken (weißer Anteil = Gewinnchance Weiß).
+
+    Folgt optional der Brett-Drehung (set_flipped): Ist das Brett gedreht
+    (Schwarz unten), füllt der Balken von unten mit Schwarz' Anteil statt
+    immer starr mit Weiß' Anteil — sonst wirkt er für Schwarz-Partien
+    verkehrt herum. Die Zahl (Score-Text) bleibt in der üblichen
+    Weiß-Perspektive (+/-), nur die Füllrichtung dreht sich mit.
+    """
 
     def __init__(self, master, height: int, width: int = 26, **kw):
         super().__init__(master, width=width, height=height, bg="#222",
                          highlightthickness=0, **kw)
         self._bar_h = height
         self._bar_w = width
-        self._frac = 0.5
+        self._frac = 0.5           # stets Weiß' Gewinnchance (0..1)
         self._label = "0.0"
+        self._flipped = False
         self._draw()
 
     def set_eval(self, win_pct_white: float, label: str) -> None:
@@ -328,13 +336,27 @@ class EvalBar(tk.Canvas):
         self._label = label
         self._draw()
 
+    def set_flipped(self, value: bool) -> None:
+        if self._flipped != value:
+            self._flipped = value
+            self._draw()
+
     def _draw(self) -> None:
         self.delete("all")
-        split = int(self._bar_h * (1.0 - self._frac))
-        self.create_rectangle(0, 0, self._bar_w, split, fill="#333333", width=0)
+        light, dark = "#e8e8e8", "#333333"
+        # "near"-Seite = die Seite, die unten im Balken sitzt (normal
+        # Weiß, nach Flip Schwarz) — deren Anteil wächst von unten.
+        near_frac = self._frac if not self._flipped else (1.0 - self._frac)
+        near_color = light if not self._flipped else dark
+        far_color = dark if not self._flipped else light
+        split = int(self._bar_h * (1.0 - near_frac))
+        self.create_rectangle(0, 0, self._bar_w, split,
+                              fill=far_color, width=0)
         self.create_rectangle(0, split, self._bar_w, self._bar_h,
-                              fill="#e8e8e8", width=0)
-        y = self._bar_h - 12 if self._frac >= 0.5 else 12
-        color = "#333333" if self._frac >= 0.5 else "#e8e8e8"
+                              fill=near_color, width=0)
+        if near_frac >= 0.5:
+            y, color = self._bar_h - 12, far_color
+        else:
+            y, color = 12, near_color
         self.create_text(self._bar_w // 2, y, text=self._label,
                          font=("DejaVu Sans", 8, "bold"), fill=color)
