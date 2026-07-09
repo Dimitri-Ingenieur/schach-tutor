@@ -20,7 +20,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default="/usr/games/stockfish",
                     help="UCI-Engine für den Test (Default: Stockfish)")
-    ap.add_argument("--seconds", type=float, default=3.0,
+    ap.add_argument("--seconds", type=float, default=10.0,
                     help="wie lange Events gepumpt werden")
     args = ap.parse_args()
 

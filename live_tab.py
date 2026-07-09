@@ -63,6 +63,7 @@ class LiveTab(ttk.Frame):
         self._eval_gen = 0
         self._eval_after: Optional[str] = None
         self._shown_history = False
+        self._delay_noted = False
         self._build_ui()
 
     # ------------------------------------------------------------ UI
@@ -153,6 +154,7 @@ class LiveTab(ttk.Frame):
         self._catchup_to = 0
         self._pending = []
         self._shown_history = False
+        self._delay_noted = False
         source = self.source_var.get()
         self.status_var.set(f"Suche laufende Partie von {user} …")
         target = (self._watch_lichess if source == "Lichess"
@@ -265,6 +267,13 @@ class LiveTab(ttk.Frame):
         self.board_widget.set_position(board, last)
         speed = game.get("speed", "")
         self.status_var.set(f"Live: {white} – {black} ({speed})")
+        if not self._delay_noted:
+            self._delay_noted = True
+            self._feed("Hinweis: Lichess verzögert den öffentlichen "
+                       "Zuschauer-Stream absichtlich um 3 Züge (Schutz "
+                       "vor Cheat-Bots). Die Anzeige hinkt dem echten "
+                       "Spiel also bewusst hinterher; am Partieende "
+                       "holt sie auf.")
         self._request_eval_debounced()
 
     def _apply_stream_event(self, gen: int, d: dict) -> None:

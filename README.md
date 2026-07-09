@@ -46,7 +46,9 @@ Engine weitertrainieren („Ab hier gegen Engine trainieren“).
 
 **Beobachten** – Laufende Partien direkt in der App verfolgen. Lichess wird
 in Echtzeit gestreamt (öffentliche ND-JSON-API, automatischer Reconnect bei
-Verbindungsabbruch); bei Chess.com stellt die öffentliche API nur laufende
+Verbindungsabbruch) — wobei Lichess laufende Partien im öffentlichen Stream
+**absichtlich um 3 Züge verzögert** ausliefert (dokumentierter
+Cheat-Bot-Schutz; zudem max. 8 gleichzeitige Streams pro IP); bei Chess.com stellt die öffentliche API nur laufende
 *Daily*-Partien bereit, die alle 12 Sekunden abgefragt werden — Live-Blitz/
 Rapid ist dort nicht öffentlich zugänglich. Dazu Zugliste, Uhren und auf
 Wunsch die **LC0-Bewertung in Echtzeit** (Balken + beste Fortsetzung) —
