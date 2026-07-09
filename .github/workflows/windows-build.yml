@@ -1,0 +1,46 @@
+name: Windows-EXE bauen
+
+# PyInstaller kann nicht cross-kompilieren (es packt den nativen
+# Python-Interpreter der Bauplattform mit ein) — die .exe muss deshalb
+# tatsächlich unter Windows gebaut werden. windows-latest übernimmt das.
+on:
+  workflow_dispatch:        # Button "Run workflow" im Actions-Tab
+  push:
+    tags:
+      - "v*"                # z. B. Tag "v1.0" pushen -> automatischer Build
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: EXE bauen
+        run: >
+          pyinstaller --name SchachTutor --onefile --windowed
+          --collect-all chess main.py
+
+      - name: Plausibilitätsprüfung (Datei existiert, Größe passt)
+        shell: pwsh
+        run: |
+          $f = Get-Item dist/SchachTutor.exe
+          Write-Host "Größe: $([math]::Round($f.Length/1MB, 1)) MB"
+          if ($f.Length -lt 5MB) {
+            throw "EXE verdächtig klein - PyInstaller-Build vermutlich unvollständig"
+          }
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: SchachTutor-windows
+          path: dist/SchachTutor.exe
+          if-no-files-found: error

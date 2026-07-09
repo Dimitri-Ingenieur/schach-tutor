@@ -377,6 +377,40 @@ def main():
                     and live.fmt_clock(3700) == "1:01:40"
                     and live.fmt_clock(3_700_000) == "1:01:40")
 
+        # --- Test 11: APP_DIR unter PyInstaller (--onefile) --------------
+        print("\nTest 11 – APP_DIR bleibt stabil, auch 'gefroren' "
+              "(PyInstaller):")
+        import importlib
+        import config as config_mod
+        normal_dir = config_mod._app_dir()
+        ok &= check("normal: Ordner des Moduls selbst",
+                    normal_dir == os.path.dirname(
+                        os.path.abspath(config_mod.__file__)))
+
+        old_frozen = getattr(sys, "frozen", False)
+        old_exe = sys.executable
+        try:
+            sys.frozen = True
+            sys.executable = os.path.join(os.sep, "Programme",
+                                          "SchachTutor", "SchachTutor.exe")
+            frozen_dir = config_mod._app_dir()
+            ok &= check("gefroren: Ordner der .exe, NICHT des Temp-"
+                        "Entpackpfads",
+                        frozen_dir == os.path.join(os.sep, "Programme",
+                                                   "SchachTutor"))
+            ok &= check("gefroren: unterscheidet sich vom Modul-Pfad "
+                        "(kein Zufallstreffer)", frozen_dir != normal_dir)
+        finally:
+            if old_frozen:
+                sys.frozen = old_frozen
+            else:
+                try:
+                    del sys.frozen
+                except AttributeError:
+                    pass
+            sys.executable = old_exe
+            importlib.reload(config_mod)  # DEFAULTS/APP_DIR sauber zurück
+
     finally:
         engine.quit()
 

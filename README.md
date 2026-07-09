@@ -190,6 +190,52 @@ als Stunden. Buch + Maia liefern den Großteil des Nutzens sofort.
   höher liegen: 800–2000 Knoten; pro Fehler sind das nur eine Handvoll
   Engine-Aufrufe. Das Deck liegt in `puzzles.json`.
 
+## Windows-EXE bauen
+
+Cross-Compiling für Windows unter Linux funktioniert bei PyInstaller (dem
+Standardwerkzeug dafür) nicht — es packt den nativen Python-Interpreter der
+Bauplattform mit ein, eine Linux-gebaute "Windows-EXE" wäre also in
+Wirklichkeit ein Linux-Programm. Der saubere Weg ohne eigene
+Windows-Maschine: **GitHub Actions mit einem `windows-latest`-Runner** —
+das *ist* effektiv "auf dem Zielsystem bauen", nur kostenlos in der Cloud.
+
+Im Repo liegt dafür `.github/workflows/windows-build.yml`. Auslösen:
+
+- **Manuell:** GitHub → Tab „Actions" → „Windows-EXE bauen" → „Run workflow".
+- **Automatisch:** einen Tag pushen, z. B. `git tag v1.0 && git push --tags`.
+
+Nach ein paar Minuten liegt unter dem Workflow-Lauf ein Artefakt
+„SchachTutor-windows" mit `SchachTutor.exe` zum Download (einzelne Datei,
+`--onefile`, kein Python nötig auf dem Zielrechner).
+
+**Wichtig zu wissen:**
+- Die EXE enthält nur Schach-Tutor selbst — **LC0 wird nicht mitgeliefert**.
+  Windows-Build separat besorgen (offizielle Releases auf
+  github.com/LeelaChessZero/lc0) und wie gewohnt über Datei →
+  Einstellungen einbinden.
+- Windows SmartScreen/Defender warnt bei unsignierten EXEs aus PyInstaller
+  praktisch immer beim ersten Start ("Windows hat den PC geschützt") — das
+  ist normal für unsignierte Hobby-Software, kein Hinweis auf ein
+  kaputtes Build. Signieren würde ein kostenpflichtiges Zertifikat
+  erfordern, für den Eigenbedarf nicht nötig.
+- `--onefile` bedeutet: die EXE entpackt sich bei jedem Start neu in einen
+  Temp-Ordner. `config.py` erkennt den PyInstaller-Modus (`sys.frozen`)
+  und legt `settings.json`/`cache/`/`puzzles.json` deshalb neben der EXE
+  selbst ab, nicht im wechselnden Temp-Ordner — sonst wären Einstellungen
+  und Rätsel-Deck nach jedem Neustart weg.
+
+Lokal bauen (auf einer echten Windows-Maschine, z. B. zum Debuggen) geht
+mit genau dem, was der Workflow auch tut:
+
+```powershell
+pip install -r requirements.txt pyinstaller
+pyinstaller --name SchachTutor --onefile --windowed --collect-all chess main.py
+```
+
+Für den ersten Testlauf empfiehlt sich `--console` statt `--windowed`
+(Fenster mit Konsole statt ohne) — dann sieht man Tracebacks, falls beim
+Start etwas fehlschlägt, statt dass sich nur lautlos nichts öffnet.
+
 ## Dateien
 
 ```

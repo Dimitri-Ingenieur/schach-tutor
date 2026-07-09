@@ -4,8 +4,26 @@
 import json
 import os
 import shlex
+import sys
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _app_dir() -> str:
+    """Ordner für settings.json/cache/puzzles.json.
+
+    Normal (python main.py): der Ordner, in dem dieses Modul liegt — wie
+    bisher. Als PyInstaller-Executable (--onefile) zeigt __file__ dagegen
+    in einen Temp-Ordner, der bei --onefile bei JEDEM Start neu entpackt
+    und danach wieder gelöscht wird — Einstellungen, Rätsel-Deck und
+    Analyse-Cache wären also nach jedem Neustart weg. sys.executable
+    bleibt stattdessen stabil dort, wo die .exe tatsächlich liegt (auch
+    bei --onedir), das ist hier der richtige Bezugspunkt.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+APP_DIR = _app_dir()
 SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 CACHE_DIR = os.path.join(APP_DIR, "cache")
 PUZZLES_FILE = os.path.join(APP_DIR, "puzzles.json")
