@@ -12,6 +12,7 @@ import chess
 import config
 from engine_hub import EngineHub
 from live_tab import LiveTab
+from vision_tab import VisionTab
 from opponent_tab import OpponentTab
 from puzzle_tab import PuzzleTab
 from training_tab import TrainingTab
@@ -36,6 +37,8 @@ class ChessTutorApp(tk.Tk):
         self.notebook.add(self.puzzle_tab, text="  Rätsel  ")
         self.notebook.add(self.opponent_tab, text="  Gegner-Analyse  ")
         self.notebook.add(self.live_tab, text="  Beobachten  ")
+        self.vision_tab = VisionTab(self.notebook, self)
+        self.notebook.add(self.vision_tab, text="  Video  ")
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.status_var = tk.StringVar(value="Engine wird gestartet …")
@@ -110,7 +113,9 @@ class ChessTutorApp(tk.Tk):
             "  Stellungen direkt weitertrainieren.\n"
             "• Beobachten: laufende Partien live verfolgen\n"
             "  (Lichess-Stream, Chess.com-Daily) – mit\n"
-            "  LC0-Bewertung in Echtzeit.")
+            "  LC0-Bewertung in Echtzeit.\n"
+            "• Video: Schachbrett in Videobild/Stream/Bildschirm\n"
+            "  erkennen und Züge live kommentieren.")
 
     # ------------------------------------------------------------ Engine
 

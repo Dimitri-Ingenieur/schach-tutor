@@ -1,2 +1,5 @@
 python-chess>=1.10
 pillow>=10.0
+opencv-python-headless>=4.8   # Video-Tab: Videodateien/Webcam/Streams lesen
+mss>=9.0                      # Video-Tab: Bildschirmaufnahme
+numpy>=1.26                   # Video-Tab: Bildverarbeitung

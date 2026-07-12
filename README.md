@@ -55,6 +55,37 @@ Wunsch die **LC0-Bewertung in Echtzeit** (Balken + beste Fortsetzung) —
 ideal, um den nächsten Gegner beim Spielen zu scouten. Endet die Partie,
 lässt sie sich direkt über den Import im Gegner-Analyse-Tab auswerten.
 
+**Video** – Der Tutor kommentiert Partien, die er nur als *Bild* sieht:
+Videodatei, Webcam, Stream-URL oder der eigene Bildschirm (z. B. ein
+Browserfenster mit einem YouTube/Twitch-Schachstream). Einmal das Brett in
+der Vorschau mit der Maus aufziehen und „Kalibrieren" — der Tab erkennt
+**Stellung und Orientierung von selbst** (FEN-Feld leer lassen), auch
+mitten in der Partie: Figurtypen kommen aus einem Silhouetten-Abgleich
+(Schachfiguren-Formen sind über Figurensätze hinweg konventionell), die
+Farbentscheidung ist typbewusst kalibriert. Zwei Dinge sind aus einem
+Einzelbild prinzipiell nicht ablesbar und werden ehrlich behandelt: Wer
+**am Zug** ist, wird über die Stellungs-Gültigkeit bestimmt bzw. geraten
+und beim ersten erkannten Zug automatisch korrigiert; **Rochaderechte**
+folgen der üblichen Grundstellungs-Heuristik. Ein manueller FEN bleibt als
+Präzisionsoption. Ab dann erkennt der Tab jeden Zug und schickt ihn durch dieselbe Bewertung wie im Training:
+Eval-Balken, beste Fortsetzung, und bei Fehlern der gewohnte Kommentar
+(„17.Lf3?? – Patzer. Nach Dxh4 geht Material verloren …").
+
+Wie die Erkennung arbeitet — und wo ihre Grenzen liegen: Es wird pro Feld
+nur **Belegung und Figurfarbe** bestimmt; der Zug ergibt sich per
+Legalitäts-Abgleich (welcher legale Zug erzeugt exakt dieses Muster?). Das
+macht die Erkennung unabhängig vom Figurensatz des Streams und erkennt
+Rochade und en passant automatisch. Umwandlungen sind belegungsgleich —
+es wird die Dame angenommen (mit Log-Hinweis). Verpasst die Erkennung Züge (schnelles Blitz, kurzes Overlay), **holt sie
+selbstständig auf**: Gesucht wird die legale Zugfolge (bis 3 Halbzüge), die
+zur beobachteten Stellung führt — die Endstellung ist dabei gesichert, bei
+Zugumstellungen wird die Reihenfolge rekonstruiert und entsprechend
+markiert. Nur wenn auch das nicht reicht (langer Sprung im Video), hilft:
+aktuelle Stellung als FEN eintragen und neu kalibrieren.
+**Geltungsbereich: digitale 2D-Bretter.** Physische Bretter über eine
+Kamera (Perspektive, 3D-Figuren, Hände im Bild) sind ein eigenes
+Forschungsfeld und bewusst kein Ziel dieses Tabs.
+
 ## Installation
 
 ```bash
@@ -247,6 +278,9 @@ opponent.py       PGN-Batch-Analyse, Cache, Profil, Dossier-Text
 puzzles.py        Rätsel-Erzeugung (Eindeutigkeit, Mattlinien), Leitner-Deck
 opponent_book.py  Polyglot-Buch aus den Zügen eines Spielers
 lichess.py        Partien-Export über die Lichess-API
+vision.py         Zugerkennung aus Videobildern (Belegungs-Klassifikation)
+vision_tab.py     Video-Tab (Quelle, Brett-Auswahl, Live-Kommentar)
+vision_testboard.py  Synthetischer Brett-Renderer für die Vision-Tests
 live.py           Laufende Partien: Lichess-Stream, Chess.com-Daily
 live_tab.py       Beobachten-Tab (Live-Brett, Uhren, Echtzeit-Bewertung)
 chesscom.py       Partien-Export über die Chess.com-API (Monatsarchive)

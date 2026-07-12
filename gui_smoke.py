@@ -180,6 +180,31 @@ def main() -> None:
     print("Beobachten-Tab OK: Schlussstellung wird trotz Auto-Stopp "
          "noch bewertet (Label:", lt.eval_bar._label + ")")
 
+    # Video-Tab: Kalibrierung + ein erkannter Zug durch den echten
+    # Kommentar-Pfad (ohne echte Videoquelle — Frame wird injiziert).
+    from vision_testboard import render_frame, BOARD_RECT
+    vt = app.vision_tab
+    vt.state = "running"
+    vt._gen += 1
+    vt.rect = BOARD_RECT
+    with vt._frame_lock:
+        vt._latest = render_frame(chess.Board())
+    vt.calibrate()
+    assert vt.classifier is not None, "Video-Kalibrierung fehlgeschlagen"
+    vt._apply_moves(vt._gen, ["e2e4"])
+    app.update()
+    assert vt.board.piece_at(chess.E4) is not None, "Zug nicht übernommen"
+    vlog = vt.log.get("1.0", "end")
+    assert "1. e4" in vlog, f"Zug nicht im Kommentar-Log: {vlog!r}"
+    t_end = time.time() + 6
+    while time.time() < t_end and vt.eval_bar._label == "0.0":
+        app.update()
+        time.sleep(0.02)
+    assert vt.eval_bar._label != "0.0", "Video-Tab: Bewertung kam nie an"
+    vt.stop_capture()
+    print("Video-Tab OK: Kalibrierung, Zugerkennung und Kommentar-Pfad "
+         "(Eval:", vt.eval_bar._label + ")")
+
     # Events pumpen, bis der Engine-Ping durch die Callback-Queue zurück ist.
     deadline = time.time() + args.seconds
     while time.time() < deadline:

@@ -411,6 +411,160 @@ def main():
             sys.executable = old_exe
             importlib.reload(config_mod)  # DEFAULTS/APP_DIR sauber zurück
 
+        # --- Test 12: Video-Zugerkennung (Vision-Pipeline) ---------------
+        print("\nTest 12 – Video-Zugerkennung (synthetische Frames + "
+              "echtes Video):")
+        import cv2
+        import vision
+        from vision_testboard import render_frame, BOARD_RECT
+
+        def vrun(moves_uci, flipped):
+            vb = chess.Board()
+            clf = vision.CellClassifier()
+            if not clf.calibrate(
+                    vision.split_cells(render_frame(vb, flipped),
+                                       BOARD_RECT), chess.Board()):
+                return None, []
+            rec = vision.Recognizer()
+            seen = []
+            for uci in moves_uci:
+                vb.push_uci(uci)
+                grid = clf.classify(vision.split_cells(
+                    render_frame(vb, flipped), BOARD_RECT))
+                got = []
+                for _ in range(vision.STABLE_FRAMES):
+                    got = rec.feed(grid) or got
+                if not got:
+                    return clf.flipped, seen
+                seen.extend(m.uci() for m in got)
+            return clf.flipped, seen
+
+        vg1 = ["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"]
+        fl, seen = vrun(vg1, False)
+        ok &= check("Partie erkannt (Schlagzug + Matt)",
+                    seen == vg1 and fl is False)
+        vg2 = ["e2e4", "g8f6", "g1f3", "b7b6", "f1e2", "c8b7", "e1g1",
+               "e7e6", "e4e5", "d7d5", "e5d6"]
+        fl2, seen2 = vrun(vg2, True)
+        ok &= check("gedrehtes Brett: Rochade + en passant",
+                    seen2 == vg2 and fl2 is True)
+
+        pb = chess.Board("8/P6k/8/8/8/8/8/7K w - - 0 1")
+        clf = vision.CellClassifier()
+        okc = clf.calibrate(vision.split_cells(render_frame(pb),
+                                               BOARD_RECT), pb.copy())
+        rec = vision.Recognizer(board=pb.copy())
+        pb.push_uci("a7a8q")
+        grid = clf.classify(vision.split_cells(render_frame(pb),
+                                               BOARD_RECT))
+        got = []
+        for _ in range(vision.STABLE_FRAMES):
+            got = rec.feed(grid) or got
+        ok &= check("Umwandlung → Dame",
+                    okc and len(got) == 1 and got[0].uci() == "a7a8q")
+
+        # Hand-ungenaue Rechtecke: die automatische Nachjustierung muss
+        # beide Orientierungen retten (hier saß der "Kalibrierung
+        # fehlgeschlagen bei Schwarz unten"-Bug: ohne Suche scheiterten
+        # ~2/3 aller handgezogenen Rechtecke, orientierungsunabhängig).
+        bx, by, bw, bh = BOARD_RECT
+        for vflip, (pdx, pdy, pds) in ((False, (3, -4, 5)),
+                                       (True, (-4, 3, -6))):
+            frame = render_frame(chess.Board(), vflip)
+            wobbly = (bx + pdx, by + pdy, bw + pds, bh + pds)
+            clf, refined = vision.calibrate_search(frame, wobbly,
+                                                   chess.Board())
+            ok &= check(f"Rechteck-Nachjustierung (flipped={vflip})",
+                        clf is not None and clf.flipped == vflip
+                        and refined is not None)
+
+        rec3 = vision.Recognizer()
+        db = chess.Board(); db.push_uci("e2e4"); db.push_uci("e7e5")
+        caught = []
+        for _ in range(vision.STABLE_FRAMES):
+            caught = rec3.feed(vision.occupancy_from_board(db)) or caught
+        ok &= check("verpasster Zug wird aufgeholt (2 Züge am Stück)",
+                    [m.uci() for m in caught] == ["e2e4", "e7e5"]
+                    and not rec3.desync
+                    and rec3.board.fen() == db.fen())
+
+        rec4 = vision.Recognizer()
+        weird = [list(r) for r in
+                 vision.occupancy_from_board(chess.Board())]
+        weird[4][4] = vision.WHITE_PC        # Geisterfigur → unerreichbar
+        wgrid = tuple(tuple(r) for r in weird)
+        for _ in range(vision.STABLE_FRAMES):
+            rec4.feed(wgrid)
+        ok &= check("unerreichbares Muster → Desync bleibt", rec4.desync)
+
+        for vflip in (False, True):
+            frame = render_frame(chess.Board(), vflip)
+            clf, _r = vision.calibrate_search(
+                frame, (bx + 3, by - 4, bw + 5, bh + 5), expected=None)
+            ok &= check(f"FEN-lose Kalibrierung (flipped={vflip})",
+                        clf is not None and clf.flipped == vflip)
+        midb = chess.Board()
+        for u in ("e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6"):
+            midb.push_uci(u)
+        for vflip in (False, True):
+            clf, _r = vision.calibrate_search(render_frame(midb, vflip),
+                                              BOARD_RECT, expected=None)
+            ok &= check(f"Mittelspiel FEN-los erkannt (flipped={vflip})",
+                        clf is not None and clf.flipped == vflip
+                        and clf.detected_board.board_fen()
+                        == midb.board_fen())
+        endb = chess.Board("6k1/5ppp/8/8/2Q5/8/5PPP/3R2K1 w - - 0 30")
+        clf, _r = vision.calibrate_search(render_frame(endb), BOARD_RECT,
+                                          expected=None)
+        ok &= check("Endspiel FEN-los erkannt (typbewusste Farben)",
+                    clf is not None and clf.detected_board.board_fen()
+                    == endb.board_fen())
+        oneb = chess.Board(); oneb.push_uci("e2e4")
+        clf, ref = vision.calibrate_search(render_frame(oneb), BOARD_RECT,
+                                           expected=None)
+        rec5 = vision.Recognizer(board=clf.detected_board.copy(),
+                                 turn_uncertain=clf.turn_uncertain)
+        afterb = oneb.copy(); afterb.push_uci("c7c5")
+        agrid = clf.classify(vision.split_cells(render_frame(afterb),
+                                                ref))
+        caught2 = []
+        for _ in range(vision.STABLE_FRAMES):
+            caught2 = rec5.feed(agrid) or caught2
+        ok &= check("Zugseiten-Autokorrektur (kürzeste Erklärung)",
+                    [m.uci() for m in caught2] == ["c7c5"]
+                    and rec5.board.board_fen() == afterb.board_fen())
+
+        with tempfile.TemporaryDirectory() as td:
+            vpath = os.path.join(td, "spiel.avi")
+            vw = cv2.VideoWriter(vpath, cv2.VideoWriter_fourcc(*"MJPG"),
+                                 8.0, (520, 460))
+            vb = chess.Board()
+            vframes = [render_frame(vb)] * 4
+            for uci in vg1:
+                vb.push_uci(uci)
+                vframes += [render_frame(vb)] * 4
+            for f in vframes:
+                vw.write(cv2.cvtColor(f, cv2.COLOR_RGB2BGR))
+            vw.release()
+            cap = cv2.VideoCapture(vpath)
+            clf = vision.CellClassifier()
+            rec = vision.Recognizer()
+            vseen, calibrated = [], False
+            while True:
+                okr, fr = cap.read()
+                if not okr:
+                    break
+                cells = vision.split_cells(
+                    cv2.cvtColor(fr, cv2.COLOR_BGR2RGB), BOARD_RECT)
+                if not calibrated:
+                    calibrated = clf.calibrate(cells, chess.Board())
+                    continue
+                got = rec.feed(clf.classify(cells))
+                vseen.extend(m.uci() for m in got)
+            cap.release()
+            ok &= check("Video-Roundtrip (Datei → Züge, MJPG)",
+                        vseen == vg1)
+
     finally:
         engine.quit()
 
